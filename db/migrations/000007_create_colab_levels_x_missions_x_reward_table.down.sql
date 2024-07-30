@@ -1,0 +1,1 @@
+drop table rds_mysql.colab_levels_x_missions_x_reward CASCADE;

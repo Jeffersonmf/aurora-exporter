@@ -1,0 +1,1 @@
+drop table social_metrics.v_m_sn_post_hashtags CASCADE;

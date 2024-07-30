@@ -1,0 +1,1 @@
+drop table brandlovrs.v_brand_total_balance CASCADE;

@@ -1,0 +1,1 @@
+drop table rds_mysql.brand_dnb CASCADE;

@@ -8,6 +8,14 @@
 *.so
 *.dylib
 
+.local_lakehouse
+.vscode
+.idea
+
+# Include binaries files
+__debug_bin
+main
+
 # Test binary, built with `go test -c`
 *.test
 
@@ -17,6 +25,26 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
+boilerplate
+
 # Go workspace file
 go.work
-go.work.sum
+
+resources/
+#.env
+application-dev.yaml
+application-prod.yaml
+
+#datalake files
+metastore_db
+derby.log
+
+#Binaries
+brandlovrs.exporter
+
+.DS_Store
+.metals
+.metals/
+metals*
+target
+.metals/metals.log

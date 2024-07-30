@@ -1,0 +1,1 @@
+DROP TABLE rds_mysql.brand_dnb_x_colab_user;

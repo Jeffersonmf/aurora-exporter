@@ -1,0 +1,12 @@
+---
+version: "2"
+sql:
+  - engine: postgresql
+    queries: db/sqlc/query.sql
+    schema: db/migrations/
+    #database:
+    #  uri: postgres://postgres:H0t%21Dt4r%23UYm7iEy27%25hjrFboZ@rds-hotdata-prod.cluster-cpuuws30bwjd.us-east-1.rds.amazonaws.com:5432/db-hotdata-hmlg
+    gen:
+      go:
+        package: hotdata
+        out: db/hotdata

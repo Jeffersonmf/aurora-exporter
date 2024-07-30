@@ -1,0 +1,1 @@
+drop table ecommerce.fact_orders CASCADE;
