@@ -103,14 +103,14 @@ migrate -database ${DB_URL} -path db/migrations up
 
 ```
 cd existing_repo
-git remote add origin https://new.gitlab.brandlovrs.com/brandlovrs/data/etl/go-aurora-exporter.git
+git remote add origin https://new.gitlab.com/data/etl/go-aurora-exporter.git
 git branch -M main
 git push -uf origin main
 ```
 
 ## Integrate with your tools
 
-- [ ] [Set up project integrations](https://new.gitlab.brandlovrs.com/brandlovrs/data/etl/go-aurora-exporter/-/settings/integrations)
+- [ ] [Set up project integrations](https://new.gitlab.com/data/etl/go-aurora-exporter/-/settings/integrations)
 
 ## Collaborate with your team
 

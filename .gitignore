@@ -40,7 +40,7 @@ metastore_db
 derby.log
 
 #Binaries
-brandlovrs.exporter
+
 
 .DS_Store
 .metals
