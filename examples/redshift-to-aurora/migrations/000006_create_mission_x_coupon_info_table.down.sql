@@ -1,1 +1,0 @@
-drop table rds_mysql.mission_x_coupon_info CASCADE;

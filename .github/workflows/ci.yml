@@ -35,10 +35,10 @@ jobs:
       - name: validate example configs
         env:
           REDSHIFT_DSN: postgres://example
-          HOTDATA_DSN: postgres://example
+          TARGET_DSN: postgres://example
         run: |
           go run ./cmd/aurora-exporter validate -config config/aurora-exporter.example.yaml
-          go run ./cmd/aurora-exporter validate -config examples/redshift-to-aurora/aurora-exporter.yaml
+          go run ./cmd/aurora-exporter validate -config examples/quickstart/aurora-exporter.yaml
 
   integration:
     runs-on: ubuntu-latest

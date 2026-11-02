@@ -65,14 +65,14 @@ func TestSink_PrepareStatementPerMode(t *testing.T) {
 		want string
 	}{
 		{core.ModeAppend, ""},
-		{core.ModeReplace, `DELETE FROM "core"."workspace"`},
-		{core.ModeTruncate, `TRUNCATE TABLE "core"."workspace"`},
+		{core.ModeReplace, `DELETE FROM "analytics"."orders"`},
+		{core.ModeTruncate, `TRUNCATE TABLE "analytics"."orders"`},
 		{core.ModeUpsert, ""},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.mode), func(t *testing.T) {
 			t.Parallel()
-			tx, _ := open(t, sqlsink.Postgres{}, core.Target{Table: "core.workspace", Mode: tc.mode, Keys: []string{"id"}})
+			tx, _ := open(t, sqlsink.Postgres{}, core.Target{Table: "analytics.orders", Mode: tc.mode, Keys: []string{"id"}})
 			if tc.want == "" {
 				if len(tx.execs) != 0 {
 					t.Fatalf("unexpected prepare statement %q", tx.execs[0].query)

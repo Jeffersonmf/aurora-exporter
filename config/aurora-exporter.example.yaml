@@ -35,9 +35,9 @@ connections:
     dsn: "${REDSHIFT_DSN}"    # postgres://user:pass@cluster:5439/db?sslmode=require
     max_open_conns: 4
 
-  hotdata:
+  warehouse:
     driver: postgres          # sinks: postgres, aurora-postgresql, mysql, aurora-mysql, jsonl
-    dsn: "${HOTDATA_DSN}"
+    dsn: "${TARGET_DSN}"
     max_open_conns: 8
     conn_max_lifetime: 30m
     options:
@@ -52,31 +52,31 @@ connections:
 
 pipelines:
   # Full snapshot, replaced atomically every hour (the default mode).
-  - name: brands
-    description: Brand catalog snapshot
+  - name: customers
+    description: Customer snapshot
     source:
       connection: redshift
       query: |
-        SELECT id, name, cnpj, created_at, is_active
-        FROM rds_mysql.brand_dnb
+        SELECT id, name, email, country, created_at, updated_at
+        FROM sales.customers
     target:
-      connection: hotdata
-      table: rds_mysql.brand_dnb
+      connection: warehouse
+      table: analytics.customers
       mode: replace      # append | replace | truncate | upsert
     schedule:
       every: 1h
 
   # Incremental merge on a primary key.
-  - name: workspaces
+  - name: orders
     source:
       connection: redshift
       query: |
-        SELECT id, customer_id, email, "name", "createdAt", updated_at
-        FROM core.workspace
+        SELECT id, customer_id, status, total, currency, "createdAt", updated_at
+        FROM sales.orders
         WHERE updated_at > dateadd(day, -2, getdate())
     target:
-      connection: hotdata
-      table: core.workspace
+      connection: warehouse
+      table: analytics.orders
       mode: upsert
       keys: [id]
     schedule:
@@ -90,15 +90,15 @@ pipelines:
           createdat: created_at
 
   # Manual only (no schedule): trigger with
-  #   POST /v1/pipelines/orders_dump/runs   or   aurora-exporter run orders_dump
-  - name: orders_dump
+  #   POST /v1/pipelines/events_dump/runs   or   aurora-exporter run events_dump
+  - name: events_dump
     enabled: false
     source:
       connection: redshift
-      query: SELECT * FROM ecommerce.fact_orders
+      query: SELECT * FROM sales.events
     target:
       connection: debug
-      table: fact_orders
+      table: events
     transforms:
       - type: drop_columns
-        columns: [details]
+        columns: [payload]

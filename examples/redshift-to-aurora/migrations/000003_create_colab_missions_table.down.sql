@@ -1,1 +1,0 @@
-drop table rds_mysql.colab_missions CASCADE;
