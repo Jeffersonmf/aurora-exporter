@@ -1,0 +1,63 @@
+# Quickstart: Redshift -> PostgreSQL / Aurora PostgreSQL.
+#
+# Three pipelines showing the common shapes of an export:
+#   customers    full snapshot, replaced atomically     (mode: replace)
+#   orders       incremental merge on the primary key   (mode: upsert)
+#   daily_sales  aggregation computed in the source     (mode: replace)
+#
+# Target tables come from ./migrations. The DSN defaults point at the
+# databases of docker-compose.yml, so this file runs as-is locally (see
+# README.md); set REDSHIFT_DSN and TARGET_DSN for real clusters.
+version: 1
+
+server:
+  auth_token: "${AURORA_EXPORTER_API_TOKEN:-}"
+
+defaults:
+  batch_size: 5000
+  timeout: 30m
+  transforms: [sanitize_utf8]
+
+connections:
+  redshift:
+    driver: redshift
+    dsn: "${REDSHIFT_DSN:-postgres://test:test@localhost:55432/source?sslmode=disable}"
+    max_open_conns: 4
+  warehouse:
+    driver: aurora-postgresql
+    dsn: "${TARGET_DSN:-postgres://test:test@localhost:55433/target?sslmode=disable}"
+    max_open_conns: 8
+
+pipelines:
+  - name: customers
+    description: Customer snapshot
+    source:
+      connection: redshift
+      query: |
+        SELECT id, name, email, country, created_at, updated_at
+        FROM sales.customers
+    target: {connection: warehouse, table: analytics.customers, mode: replace}
+    schedule: {every: 1h}
+
+  - name: orders
+    description: Orders changed in the last two days, merged by id
+    source:
+      connection: redshift
+      query: |
+        SELECT id, customer_id, status, total, currency, created_at, updated_at
+        FROM sales.orders
+        WHERE updated_at >= CURRENT_DATE - 2
+    target: {connection: warehouse, table: analytics.orders, mode: upsert, keys: [id]}
+    schedule: {every: 15m}
+
+  - name: daily_sales
+    description: Revenue per day, aggregated in the source
+    source:
+      connection: redshift
+      query: |
+        SELECT CAST(created_at AS date) AS day, COUNT(*) AS orders, SUM(total) AS revenue
+        FROM sales.orders
+        WHERE status <> 'refunded'
+        GROUP BY 1
+    target: {connection: warehouse, table: analytics.daily_sales, mode: replace}
+    schedule: {every: 1h}

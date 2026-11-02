@@ -1,1 +1,0 @@
-drop table core.workspace CASCADE;

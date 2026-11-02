@@ -15,18 +15,18 @@ defaults:
   transforms: [sanitize_utf8]
 connections:
   redshift: {driver: redshift, dsn: "${REDSHIFT_DSN}"}
-  hotdata:  {driver: postgres, dsn: "${HOTDATA_DSN:-postgres://localhost/hot}", max_open_conns: 4}
+  warehouse: {driver: postgres, dsn: "${TARGET_DSN:-postgres://localhost/app}", max_open_conns: 4}
 pipelines:
-  - name: brand_dnb
-    source: {connection: redshift, query: "select * from rds_mysql.brand_dnb where id > $1"}
-    target: {connection: hotdata, table: rds_mysql.brand_dnb}
+  - name: customers
+    source: {connection: redshift, query: "select * from sales.customers where id > $1"}
+    target: {connection: warehouse, table: analytics.customers}
     schedule: {every: 1h}
-  - name: workspace
+  - name: orders
     enabled: false
     attempts: 1
     timeout: 10m
-    source: {connection: redshift, query: "select * from core.workspace"}
-    target: {connection: hotdata, table: core.workspace, mode: upsert, keys: [id]}
+    source: {connection: redshift, query: "select * from sales.orders"}
+    target: {connection: warehouse, table: analytics.orders, mode: upsert, keys: [id]}
     transforms:
       - lowercase_columns
       - type: rename_columns
@@ -57,26 +57,26 @@ func TestParse_ValidFileWithDefaults(t *testing.T) {
 		t.Errorf("logging defaults not applied: %+v", cfg.Logging)
 	}
 
-	brand := cfg.Pipelines[0]
-	if brand.BatchSize != 1000 || *brand.Attempts != config.DefaultAttempts || brand.Target.Mode != "replace" {
-		t.Errorf("pipeline defaults not applied: batch=%d attempts=%d mode=%s", brand.BatchSize, *brand.Attempts, brand.Target.Mode)
+	customers := cfg.Pipelines[0]
+	if customers.BatchSize != 1000 || *customers.Attempts != config.DefaultAttempts || customers.Target.Mode != "replace" {
+		t.Errorf("pipeline defaults not applied: batch=%d attempts=%d mode=%s", customers.BatchSize, *customers.Attempts, customers.Target.Mode)
 	}
-	if brand.Schedule.Every.Std() != time.Hour || !brand.IsEnabled() {
-		t.Errorf("schedule = %v enabled=%v", brand.Schedule.Every.Std(), brand.IsEnabled())
+	if customers.Schedule.Every.Std() != time.Hour || !customers.IsEnabled() {
+		t.Errorf("schedule = %v enabled=%v", customers.Schedule.Every.Std(), customers.IsEnabled())
 	}
-	if len(brand.Transforms) != 1 || brand.Transforms[0].Type != "sanitize_utf8" {
-		t.Errorf("default transforms not inherited: %+v", brand.Transforms)
+	if len(customers.Transforms) != 1 || customers.Transforms[0].Type != "sanitize_utf8" {
+		t.Errorf("default transforms not inherited: %+v", customers.Transforms)
 	}
-	if !strings.Contains(brand.Source.Query, "$1") {
+	if !strings.Contains(customers.Source.Query, "$1") {
 		t.Error("a $1 placeholder in SQL must not be treated as an environment variable")
 	}
 
-	ws := cfg.Pipelines[1]
-	if ws.IsEnabled() || *ws.Attempts != 1 || ws.Timeout.Std() != 10*time.Minute {
-		t.Errorf("overrides not kept: enabled=%v attempts=%d timeout=%v", ws.IsEnabled(), *ws.Attempts, ws.Timeout.Std())
+	orders := cfg.Pipelines[1]
+	if orders.IsEnabled() || *orders.Attempts != 1 || orders.Timeout.Std() != 10*time.Minute {
+		t.Errorf("overrides not kept: enabled=%v attempts=%d timeout=%v", orders.IsEnabled(), *orders.Attempts, orders.Timeout.Std())
 	}
-	if len(ws.Transforms) != 2 || ws.Transforms[1].Type != "rename_columns" || ws.Transforms[1].Params == nil {
-		t.Errorf("transforms override = %+v", ws.Transforms)
+	if len(orders.Transforms) != 2 || orders.Transforms[1].Type != "rename_columns" || orders.Transforms[1].Params == nil {
+		t.Errorf("transforms override = %+v", orders.Transforms)
 	}
 }
 
@@ -87,14 +87,14 @@ func TestParse_ExpandsEnvironment(t *testing.T) {
 	if got := cfg.Connections["redshift"].DSN; got != "postgres://u:p#a: ss@rs:5439/db" {
 		t.Errorf("secret with YAML syntax was mangled: %q", got)
 	}
-	if got := cfg.Connections["hotdata"].DSN; got != "postgres://localhost/hot" {
+	if got := cfg.Connections["warehouse"].DSN; got != "postgres://localhost/app" {
 		t.Errorf("default value not applied: %q", got)
 	}
 }
 
 func TestParse_ExpandedValuesStayStrings(t *testing.T) {
 	t.Parallel()
-	doc := strings.Replace(valid, `table: core.workspace,`, `table: "${TABLE}",`, 1)
+	doc := strings.Replace(valid, `table: analytics.orders,`, `table: "${TABLE}",`, 1)
 	cfg := parse(t, doc, map[string]string{"REDSHIFT_DSN": "x", "TABLE": "123"})
 	if cfg.Pipelines[1].Target.Table != "123" {
 		t.Fatalf("table = %q", cfg.Pipelines[1].Target.Table)
@@ -103,7 +103,7 @@ func TestParse_ExpandedValuesStayStrings(t *testing.T) {
 
 func TestParse_EscapedReferenceIsLiteral(t *testing.T) {
 	t.Parallel()
-	doc := strings.Replace(valid, "select * from core.workspace", "select '$${NOT_ENV}' as x", 1)
+	doc := strings.Replace(valid, "select * from sales.orders", "select '$${NOT_ENV}' as x", 1)
 	cfg := parse(t, doc, map[string]string{"REDSHIFT_DSN": "x"})
 	if got := cfg.Pipelines[1].Source.Query; got != "select '${NOT_ENV}' as x" {
 		t.Fatalf("query = %q", got)
@@ -186,11 +186,11 @@ func TestParse_InvalidDuration(t *testing.T) {
 func TestLoad_ExampleConfigsAreValid(t *testing.T) {
 	for _, path := range []string{
 		"../../config/aurora-exporter.example.yaml",
-		"../../examples/redshift-to-aurora/aurora-exporter.yaml",
+		"../../examples/quickstart/aurora-exporter.yaml",
 	} {
 		t.Run(path, func(t *testing.T) {
 			t.Setenv("REDSHIFT_DSN", "postgres://example")
-			t.Setenv("HOTDATA_DSN", "postgres://example")
+			t.Setenv("TARGET_DSN", "postgres://example")
 			if _, err := config.Load(path); err != nil {
 				t.Fatal(err)
 			}

@@ -20,17 +20,16 @@ through an HTTP API.
 
 ```yaml
 pipelines:
-  - name: brands
-    source: {connection: redshift, query: "SELECT * FROM rds_mysql.brand_dnb"}
-    target: {connection: hotdata, table: rds_mysql.brand_dnb, mode: replace}
+  - name: customers
+    source: {connection: redshift, query: "SELECT * FROM sales.customers"}
+    target: {connection: warehouse, table: analytics.customers, mode: replace}
     schedule: {every: 1h}
 ```
 
 This is a rewrite of an internal tool that had one hand-written Go file
 per table (21 exporters, entities, sqlc queries and HTTP controllers,
-~5k lines). Those 21 exporters are now
-[one YAML file](./examples/redshift-to-aurora/aurora-exporter.yaml),
-and the rewrite fixed real data-integrity bugs documented in
+~5k lines). Those 21 exporters are now configuration (see the
+[quickstart](./examples/quickstart)), and the rewrite fixed real data-integrity bugs documented in
 [`docs/trade-offs.md`](./docs/trade-offs.md): NULLs silently written as
 `0`/`false`/`0001-01-01`, a non-transactional DELETE + INSERT that
 exposed empty tables to readers, credentials committed in source code.
@@ -95,13 +94,13 @@ in [`docs/design.md`](./docs/design.md).
 ## Quick start
 
 ```bash
-cp .env.example .env                      # fill in REDSHIFT_DSN, HOTDATA_DSN
+cp .env.example .env                      # fill in REDSHIFT_DSN, TARGET_DSN
 cp config/aurora-exporter.example.yaml config/aurora-exporter.yaml
 set -a && . ./.env && set +a
 
 make build
 ./bin/aurora-exporter validate -ping      # config + connectivity
-./bin/aurora-exporter run brands          # one pipeline, once
+./bin/aurora-exporter run customers       # one pipeline, once
 ./bin/aurora-exporter run -all            # every enabled pipeline (CronJob-friendly)
 ./bin/aurora-exporter serve               # scheduler + HTTP API
 ```
@@ -109,8 +108,8 @@ make build
 `run` exits non-zero if any pipeline failed and prints a summary:
 
 ```text
-PIPELINE  STATUS     ROWS  DURATION  ERROR
-brands    succeeded  2500  32ms
+PIPELINE   STATUS     ROWS  DURATION  ERROR
+customers  succeeded  1000  41ms
 ```
 
 ## Commands
@@ -218,7 +217,7 @@ internal/
   app/                    composition root + serve lifecycle
   cli/                    subcommands
 config/                   reference configuration
-examples/redshift-to-aurora/   the original 21 exports as config + target migrations
+examples/quickstart/      runnable example: 3 pipelines, initial migration, demo seed
 test/integration/         real-database suite (build tag: integration)
 docs/                     design.md, trade-offs.md
 ```

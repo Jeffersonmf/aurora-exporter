@@ -9,8 +9,8 @@ project uses [Semantic Versioning](https://semver.org/).
 ### Changed
 - Rewritten as a generic, declarative exporter: pipelines are YAML
   (source query, target table, write mode, schedule) instead of one Go
-  file per table. The 21 original exports live in
-  `examples/redshift-to-aurora/aurora-exporter.yaml`.
+  file per table. `examples/quickstart` is a runnable example with an
+  initial migration.
 - Module path is now `github.com/Jeffersonmf/aurora-exporter`; Go 1.27.
 - HTTP API replaced: `POST /v1/pipelines/{name}/runs` instead of one
   route per table; added run history, `/healthz`, `/readyz`, Bearer auth.
