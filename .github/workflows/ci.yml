@@ -22,9 +22,9 @@ jobs:
         run: make vet
 
       - name: lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.15.0
 
       # -race + goleak (TestMain) catch the bug class that matters most
       # here: a reader goroutine outliving a failed write, a scheduler
