@@ -1,1 +1,0 @@
-drop table brandlovrs.v_m_instagram_profiles_users CASCADE;

@@ -1,0 +1,104 @@
+# aurora-exporter configuration reference.
+#
+# Every value may reference environment variables as ${NAME} or
+# ${NAME:-default}. Expansion happens after the YAML is parsed, so
+# secrets containing YAML syntax are safe, and only the ${...} form is
+# expanded: SQL placeholders like $1 are left alone. Write $${NAME} for
+# a literal ${NAME}.
+version: 1
+
+server:
+  addr: ":8080"
+  # When set, every /v1 endpoint requires "Authorization: Bearer <token>".
+  # /healthz and /readyz stay open for probes.
+  auth_token: "${AURORA_EXPORTER_API_TOKEN:-}"
+  # On SIGTERM: stop scheduling, stop accepting requests, then give
+  # in-flight runs this long to finish before cancelling (and rolling
+  # back) them.
+  shutdown_timeout: 30s
+
+logging:
+  level: info   # debug | info | warn | error
+  format: json  # json | text
+
+# Applied to every pipeline that does not set its own value.
+defaults:
+  batch_size: 5000   # rows per fetch and per write batch
+  attempts: 3        # scheduled runs are tried this many times
+  timeout: 1h        # per run; 0 = no limit
+  transforms:
+    - sanitize_utf8  # strip NUL bytes / invalid UTF-8 that PostgreSQL rejects
+
+connections:
+  redshift:
+    driver: redshift          # also: postgres, aurora-postgresql, mysql, aurora-mysql
+    dsn: "${REDSHIFT_DSN}"    # postgres://user:pass@cluster:5439/db?sslmode=require
+    max_open_conns: 4
+
+  hotdata:
+    driver: postgres          # sinks: postgres, aurora-postgresql, mysql, aurora-mysql, jsonl
+    dsn: "${HOTDATA_DSN}"
+    max_open_conns: 8
+    conn_max_lifetime: 30m
+    options:
+      rows_per_statement: "1000"
+
+  # A file sink: handy for dry runs. "-" writes to stdout; {table} is
+  # replaced by each pipeline's target table.
+  debug:
+    driver: jsonl
+    options:
+      path: "./out/{table}.jsonl"
+
+pipelines:
+  # Full snapshot, replaced atomically every hour (the default mode).
+  - name: brands
+    description: Brand catalog snapshot
+    source:
+      connection: redshift
+      query: |
+        SELECT id, name, cnpj, created_at, is_active
+        FROM rds_mysql.brand_dnb
+    target:
+      connection: hotdata
+      table: rds_mysql.brand_dnb
+      mode: replace      # append | replace | truncate | upsert
+    schedule:
+      every: 1h
+
+  # Incremental merge on a primary key.
+  - name: workspaces
+    source:
+      connection: redshift
+      query: |
+        SELECT id, customer_id, email, "name", "createdAt", updated_at
+        FROM core.workspace
+        WHERE updated_at > dateadd(day, -2, getdate())
+    target:
+      connection: hotdata
+      table: core.workspace
+      mode: upsert
+      keys: [id]
+    schedule:
+      every: 15m
+    attempts: 5
+    transforms:          # replaces defaults.transforms
+      - sanitize_utf8
+      - lowercase_columns
+      - type: rename_columns
+        columns:
+          createdat: created_at
+
+  # Manual only (no schedule): trigger with
+  #   POST /v1/pipelines/orders_dump/runs   or   aurora-exporter run orders_dump
+  - name: orders_dump
+    enabled: false
+    source:
+      connection: redshift
+      query: SELECT * FROM ecommerce.fact_orders
+    target:
+      connection: debug
+      table: fact_orders
+    transforms:
+      - type: drop_columns
+        columns: [details]

@@ -1,0 +1,1 @@
+drop table analytics.v_brand_total_balance CASCADE;

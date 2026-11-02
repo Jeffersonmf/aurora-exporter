@@ -1,0 +1,1 @@
+drop table analytics.v_m_total_coupon_sales CASCADE;

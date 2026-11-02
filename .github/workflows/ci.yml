@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+          cache: true
+
+      - name: fmt
+        run: test -z "$(gofmt -l .)"
+
+      - name: vet
+        run: make vet
+
+      - name: lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+
+      # -race + goleak (TestMain) catch the bug class that matters most
+      # here: a reader goroutine outliving a failed write, a scheduler
+      # that does not stop on shutdown.
+      - name: test
+        run: go test ./... -race -cover
+
+      - name: validate example configs
+        env:
+          REDSHIFT_DSN: postgres://example
+          HOTDATA_DSN: postgres://example
+        run: |
+          go run ./cmd/aurora-exporter validate -config config/aurora-exporter.example.yaml
+          go run ./cmd/aurora-exporter validate -config examples/redshift-to-aurora/aurora-exporter.yaml
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+          cache: true
+      - name: integration (Postgres -> Postgres, Postgres -> MySQL)
+        run: make test-integration
+      - name: teardown
+        if: always()
+        run: docker compose down -v
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v7
+      - name: build image
+        run: docker build -t aurora-exporter:ci .
+      - name: smoke test (version, drivers)
+        run: |
+          docker run --rm aurora-exporter:ci version
+          docker run --rm aurora-exporter:ci drivers | grep -q aurora-postgresql
