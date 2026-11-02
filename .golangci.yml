@@ -1,0 +1,49 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gosec
+    - revive
+    - bodyclose
+    - unconvert
+    - errorlint
+    - noctx
+    - misspell
+  settings:
+    errcheck:
+      # Writing CLI output to stdout/stderr: there is nothing useful to
+      # do when the terminal itself is gone.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: var-naming
+        - name: indent-error-flow
+        - name: error-strings
+        - name: receiver-naming
+  exclusions:
+    rules:
+      # Tests build SQL and file paths from fixed fixtures on purpose.
+      - path: _test\.go
+        linters: [gosec]
+      # SQL is built from quoted identifiers (Dialect.QuoteIdent) and
+      # bound parameters, never from row values.
+      - path: internal/connector/sqlsink/
+        text: "G202"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: [github.com/Jeffersonmf/aurora-exporter]

@@ -1,0 +1,161 @@
+# Example "hotdata" deployment: Redshift (datahub) -> Aurora PostgreSQL.
+#
+# This file replaces the 21 hand-written exporters, entities, sqlc
+# queries and HTTP controllers of the original implementation (one Go
+# file per table, ~5k lines) with configuration. Target tables are
+# created by ./migrations (golang-migrate format).
+#
+# Every pipeline is a full snapshot in "replace" mode: the original
+# code did DELETE + row-by-row INSERT outside a transaction; here the
+# DELETE and the INSERTs share one transaction, so readers never see
+# an empty or half-loaded table and a failed run changes nothing.
+#
+# Queries using SELECT * rely on Redshift returning the same column
+# names as the target table; list columns explicitly if they diverge.
+#
+# No pipeline is scheduled here (the original workers were all
+# disabled). Run them with `aurora-exporter run --all`, e.g. from a
+# Kubernetes CronJob, or add `schedule: {every: 1h}` and use `serve`.
+version: 1
+
+server:
+  auth_token: "${AURORA_EXPORTER_API_TOKEN:-}"
+
+defaults:
+  batch_size: 5000
+  timeout: 1h
+  transforms: [sanitize_utf8]
+
+connections:
+  redshift:
+    driver: redshift
+    dsn: "${REDSHIFT_DSN}"
+    max_open_conns: 4
+  hotdata:
+    driver: aurora-postgresql
+    dsn: "${HOTDATA_DSN}"
+    max_open_conns: 8
+
+pipelines:
+  - name: brand_dnb
+    source: {connection: redshift, query: "SELECT * FROM datahub.rds_mysql.brand_dnb"}
+    target: {connection: hotdata, table: rds_mysql.brand_dnb}
+
+  - name: brand_dnb_x_colab_user
+    source: {connection: redshift, query: "SELECT * FROM rds_mysql.brand_dnb_x_colab_user"}
+    target: {connection: hotdata, table: rds_mysql.brand_dnb_x_colab_user}
+
+  - name: brand_dnb_x_influencer_invite
+    source:
+      connection: redshift
+      query: |
+        SELECT id, fk_id_brand_dnb, fk_id_colab_user, "acceptedAt", "createdAt", "rejectedAt",
+               flag_who_invited, flag_apply_take_rate
+        FROM rds_mysql.brand_dnb_x_influencer_invite
+    target: {connection: hotdata, table: rds_mysql.brand_dnb_x_influencer_invite}
+    # The target columns were created unquoted (acceptedat, createdat, ...).
+    transforms: [sanitize_utf8, lowercase_columns]
+
+  - name: calendar
+    source: {connection: redshift, query: "SELECT date, year, month, day, dow, week, quarter FROM analytics.calendar"}
+    target: {connection: hotdata, table: analytics.calendar}
+
+  - name: colab_coupon
+    source:
+      connection: redshift
+      query: |
+        SELECT id, created_at, expires_at, influencer_coupon_prefix, quantity, fk_id_colab_user,
+               fk_id_mission_x_coupon_info, ecommerce_coupon_id, amount_of_use, last_use
+        FROM datahub.rds_mysql.colab_coupon
+    target: {connection: hotdata, table: rds_mysql.colab_coupon}
+
+  - name: colab_levels_x_missions_x_reward
+    source: {connection: redshift, query: "SELECT * FROM rds_mysql.colab_levels_x_missions_x_reward"}
+    target: {connection: hotdata, table: rds_mysql.colab_levels_x_missions_x_reward}
+
+  - name: colab_missions
+    source: {connection: redshift, query: "SELECT * FROM rds_mysql.colab_missions"}
+    target: {connection: hotdata, table: rds_mysql.colab_missions}
+
+  - name: colab_missions_x_colab_user
+    source: {connection: redshift, query: "SELECT * FROM rds_mysql.colab_missions_x_colab_user"}
+    target: {connection: hotdata, table: rds_mysql.colab_missions_x_colab_user}
+
+  - name: colab_user
+    source: {connection: redshift, query: "SELECT * FROM datahub.rds_mysql.colab_user"}
+    target: {connection: hotdata, table: rds_mysql.colab_user}
+
+  - name: colab_user_data
+    source: {connection: redshift, query: "SELECT id, value, fk_id_colab_type_label, fk_id_colab_user FROM rds_mysql.colab_user_data"}
+    target: {connection: hotdata, table: rds_mysql.colab_user_data}
+
+  - name: fact_orders
+    source:
+      connection: redshift
+      query: |
+        SELECT pk_id, connector_tag, workspace_id, source_id, connection_id, order_id, customer_id,
+               total, shipping, discount, cancel_reason, currency, internal_id, "source", details,
+               status, active, processed_at, created_at, updated_at, deleted_at, cancelled_at
+        FROM ecommerce.fact_orders
+    target: {connection: hotdata, table: ecommerce.fact_orders}
+
+  - name: mission_x_coupon_info
+    source: {connection: redshift, query: "SELECT * FROM rds_mysql.mission_x_coupon_info"}
+    target: {connection: hotdata, table: rds_mysql.mission_x_coupon_info}
+
+  - name: total_coupon_sales
+    source: {connection: redshift, query: "SELECT * FROM analytics.v_m_total_coupon_sales"}
+    target: {connection: hotdata, table: analytics.v_m_total_coupon_sales}
+
+  - name: brand_wallet_history
+    source:
+      connection: redshift
+      query: |
+        SELECT brand_id, brand_name, mission_id, mission_name, challenge_type, value, order_id,
+               transaction_date, source_balance, target_balance, transaction_type, details
+        FROM analytics.v_m_brand_wallet_history
+    target: {connection: hotdata, table: analytics.v_m_brand_wallet_history}
+
+  - name: brand_total_balance
+    source: {connection: redshift, query: "SELECT * FROM analytics.v_brand_total_balance"}
+    target: {connection: hotdata, table: analytics.v_brand_total_balance}
+
+  - name: brands
+    source: {connection: redshift, query: "SELECT * FROM analytics.v_m_brands"}
+    target: {connection: hotdata, table: analytics.v_m_brands}
+
+  - name: post_metrics
+    source:
+      connection: redshift
+      query: |
+        SELECT post_id, social_network_id, url, profile_id, last_updated, likes, comments, plays, shares
+        FROM social_metrics.v_m_post_metrics
+    target: {connection: hotdata, table: social_metrics.v_m_post_metrics}
+
+  - name: instagram_profiles_brands
+    source:
+      connection: redshift
+      query: |
+        SELECT brand_id, instagram_id, instagram_username, instagram_fullname, instagram_igtvvideocount,
+               instagram_postscount, instagram_followerscount, instagram_followscount,
+               instagram_data_ingestion, instagram_biography, instagram_private, instagram_verified,
+               instagram_profile_url, instagram_profile_picture_url, instagram_profile_picture_url_hd
+        FROM analytics.v_m_instagram_profiles_brands
+    target: {connection: hotdata, table: analytics.v_m_instagram_profiles_brands}
+
+  - name: sn_post_hashtags
+    source: {connection: redshift, query: "SELECT * FROM social_metrics.v_m_sn_post_hashtags"}
+    target: {connection: hotdata, table: social_metrics.v_m_sn_post_hashtags}
+
+  - name: instagram_profiles_users
+    source: {connection: redshift, query: "SELECT * FROM analytics.v_m_instagram_profiles_users"}
+    target: {connection: hotdata, table: analytics.v_m_instagram_profiles_users}
+
+  - name: workspace
+    source:
+      connection: redshift
+      query: |
+        SELECT id, customer_id, email, "name", reference_id, integrator_id, active,
+               created_at, updated_at, "type"
+        FROM core.workspace
+    target: {connection: hotdata, table: core.workspace}

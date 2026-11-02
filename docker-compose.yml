@@ -1,0 +1,21 @@
+# Local databases for the integration suite (make test-integration).
+# "source" plays Redshift: Redshift speaks the PostgreSQL wire protocol,
+# so the same driver and code path are exercised.
+services:
+  source:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: test, POSTGRES_PASSWORD: test, POSTGRES_DB: source}
+    ports: ["55432:5432"]
+    healthcheck: {test: ["CMD", "pg_isready", "-U", "test"], interval: 2s, retries: 30}
+
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: test, POSTGRES_PASSWORD: test, POSTGRES_DB: target}
+    ports: ["55433:5432"]
+    healthcheck: {test: ["CMD", "pg_isready", "-U", "test"], interval: 2s, retries: 30}
+
+  mysql:
+    image: mysql:8.4
+    environment: {MYSQL_ROOT_PASSWORD: test, MYSQL_DATABASE: target, MYSQL_USER: test, MYSQL_PASSWORD: test}
+    ports: ["53306:3306"]
+    healthcheck: {test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ptest"], interval: 2s, retries: 60}

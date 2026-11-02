@@ -1,1 +1,0 @@
-drop table brandlovrs.v_m_brand_wallet_history CASCADE;

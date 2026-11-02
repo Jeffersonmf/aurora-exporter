@@ -1,50 +1,28 @@
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
+# Binaries
+/bin/
+/aurora-exporter
 *.exe
-*.exe~
 *.dll
 *.so
 *.dylib
-
-.local_lakehouse
-.vscode
-.idea
-
-# Include binaries files
-__debug_bin
-main
-
-# Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Coverage
 *.out
+coverage.*
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Local configuration and secrets: never commit these.
+.env
+.env.*
+!.env.example
+config/aurora-exporter.yaml
+/out/
 
-boilerplate
-
-# Go workspace file
+# Go workspace
 go.work
+go.work.sum
 
-resources/
-#.env
-application-dev.yaml
-application-prod.yaml
-
-#datalake files
-metastore_db
-derby.log
-
-#Binaries
-
-
+# Editors / OS
+.vscode/
+.idea/
 .DS_Store
-.metals
-.metals/
-metals*
-target
-.metals/metals.log

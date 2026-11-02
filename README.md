@@ -1,181 +1,240 @@
-# go-aurora-exporter
+# 🚚 aurora-exporter
 
-#### This project consists of creating, managing and importing data currently in RedShift to the new hot bases in RDS Aurora.
+![Go](https://img.shields.io/badge/go-1.27-00ADD8.svg?logo=go)
+![Tests](https://img.shields.io/badge/tests-90%20unit%20%2B%204%20integration-brightgreen.svg)
+![Race](https://img.shields.io/badge/go%20test--race-clean-brightgreen.svg)
+![Lint](https://img.shields.io/badge/golangci--lint-0%20issues-brightgreen.svg)
+![Docker](https://img.shields.io/badge/docker-12MB%20image-blue.svg?logo=docker)
+![License](https://img.shields.io/badge/license-MIT-lightgrey.svg)
 
+**Author:** [Jefferson Marchetti](mailto:jeffersonm.ferreira@gmail.com)
 
-![](./golang.png)
+## Overview
 
-#### The entire core was built in the Go language, aiming to be fast, resilient, and easy to maintain
+A declarative, transactional exporter from Redshift (or any SQL source)
+to operational databases: Aurora PostgreSQL, PostgreSQL, Aurora MySQL,
+MySQL, or JSON lines. You describe **pipelines** in YAML (a source
+query, a target table, a write mode, an optional schedule) and
+aurora-exporter runs them on a schedule, from the CLI, or on demand
+through an HTTP API.
 
-![](./migrate1.png)
-
-## Getting Started #
-In this tutorial, you will learn how to use the migrate tool (written in Go and quite popular in Golang community) to execute database migrations. As a second part, you will write some Go code to read the data from the database.
-
-You will use PostgreSQL as the database of choice in this article, but migrate is compatible with many more databases check out the list here.
-
-![](./migrate3.png)
-
-## Getting started
-
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-### Setup 
-
-#### Installation 
-
-migrate is a cli tool that is used to run migrations, it can also be used programmatically, but in this tutorial we are going to use it via cli. There are multiple ways to install the migrate cli, such as brew, scoop, etc. Take a look at the installation document to see all the available options.
-
-We are going to install it using go install.
-
-```
-go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+```yaml
+pipelines:
+  - name: brands
+    source: {connection: redshift, query: "SELECT * FROM rds_mysql.brand_dnb"}
+    target: {connection: hotdata, table: rds_mysql.brand_dnb, mode: replace}
+    schedule: {every: 1h}
 ```
 
-#### Database 
+This is a rewrite of an internal tool that had one hand-written Go file
+per table (21 exporters, entities, sqlc queries and HTTP controllers,
+~5k lines). Those 21 exporters are now
+[one YAML file](./examples/redshift-to-aurora/aurora-exporter.yaml),
+and the rewrite fixed real data-integrity bugs documented in
+[`docs/trade-offs.md`](./docs/trade-offs.md): NULLs silently written as
+`0`/`false`/`0001-01-01`, a non-transactional DELETE + INSERT that
+exposed empty tables to readers, credentials committed in source code.
 
-To run the sample Postgres database, I have provided you with a docker-compose.yaml file. Clone the github project and run docker compose up. This will run a Postgres database on port **5454**.
+## Features
 
-You are free to setup a Postgres DB as you like. There is nothing special in the above setup.
+- **Any source, any target.** Sources: `redshift`, `postgres`,
+  `aurora-postgresql`, `mysql`, `aurora-mysql`. Targets: `postgres`,
+  `aurora-postgresql`, `mysql`, `aurora-mysql`, `jsonl`. A new database
+  is one `Dialect` (or one `Sink`) plus one registry line, see
+  [`docs/design.md`](./docs/design.md#como-adicionar-um-novo-destino).
+- **All-or-nothing runs.** Every run is one transaction on the target:
+  readers see the previous data until commit, and a failure at row
+  2,400,000 changes nothing.
+- **Four write modes**: `append`, `replace` (DELETE + INSERT, MVCC-safe
+  for readers), `truncate` (faster, locks readers; refused on MySQL
+  where TRUNCATE cannot be rolled back), `upsert` (on key columns).
+- **Streaming with bounded memory**: batches are read and written
+  concurrently, memory is `(prefetch + 1) × batch_size` rows regardless
+  of table size; INSERTs are multi-row and sized to the dialect's bind
+  parameter limit.
+- **Transforms**: `sanitize_utf8` (NUL bytes / invalid UTF-8 that
+  PostgreSQL rejects), `rename_columns`, `drop_columns`,
+  `lowercase_columns`, pluggable through a registry.
+- **Scheduling** through [go-workers](https://github.com/Jeffersonmf/go-workers)
+  (retries, panic recovery), with a per-pipeline lock: a pipeline never
+  runs twice at once, whether triggered by the scheduler, the API or both.
+- **Operable**: graceful shutdown (stop scheduling, drain in-flight runs
+  within a deadline, roll back the rest), `/healthz` + `/readyz`
+  (pings every database), run history API, structured logs
+  (`log/slog`), Bearer-token auth, non-root `FROM scratch` image.
+- **Strict config**: unknown keys are errors (`bacth_size` does not
+  silently become the default), every violation is reported at once,
+  `${VAR}` / `${VAR:-default}` expansion that cannot be broken by
+  secrets containing YAML syntax.
 
-### Creating Golang Migrations 
+## Architecture
 
-You will create a posts table which will have to 2 columns, title and body.
-
-To create a new migration run the migrate create command with appropriate options.
-
-```
-migrate create -ext sql -dir db/migrations create_posts_table
-```
-
-**ext** specifies the file extension to use when creating migrations file.
-
-**dir** specifies which directory to create the migrations in.
-This will create two migrations in db/migrations folder matching the pattern: <timestamp>_create_posts_table.down.sql and <timestamp>_create_posts_table.up.sql.
-
-* UP migration will contain the sql to create the post table.
-* DOWN migration will contain the sql to revert what has been done in the up migration.
-
-### Writing SQL 
-
-In the <timestamp>_create_posts_table.up.sql migration file write the sql to create posts table.
-
-```
-CREATE TABLE IF NOT EXISTS posts (title varchar, body varchar);
-```
-
-In the <timestamp>_create_posts_table.down.sql migration file write the sql to drop posts table.
-```
-DROP TABLE IF EXISTS posts;
-```
-
-### Running migrations 
-
-**migrate** needs a way to connect the database to execute the sql statements. For this you will need a valid postgres connection string following the format:
-
-```
-postgres://<username>:<password>@localhost:<port>/<db_name>?sslmode=disable
-```
-
-If you are using the database using the docker-compose.yaml method specified above, the connection string will look like this:
-
-```
-postgres://postgres:postgres@localhost:5454/postgres?sslmode=disable
-```
-
-To run migrations use migrate up command with the appropriate options.
-
-```
-export DB_URL='postgres://postgres:postgres@localhost:5454/postgres?sslmode=disable'
-```
-
-# Run migrations
-migrate -database ${DB_URL} -path db/migrations up
-
-![](./migrate2.png)
-
-## Add your files
-
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
-
-```
-cd existing_repo
-git remote add origin https://new.gitlab.com/data/etl/go-aurora-exporter.git
-git branch -M main
-git push -uf origin main
+```mermaid
+flowchart LR
+    subgraph Adapters in
+        CLI["CLI\nrun / serve / validate"]
+        API["HTTP API\n/v1/pipelines, /v1/runs"]
+        SCH["Scheduler\n(go-workers)"]
+    end
+    CLI --> SVC
+    API --> SVC
+    SCH --> SVC
+    SVC["service\nlock per pipeline,\nrun history"] --> RUN["core.Runner\nstream + transform + commit"]
+    RUN -->|Source port| SRC["sqlsource\nRedshift, Postgres, MySQL"]
+    RUN -->|Transformer port| TR["transform\nregistry"]
+    RUN -->|Sink port| SNK["sqlsink + Dialect + Strategy\njsonl"]
 ```
 
-## Integrate with your tools
+`internal/core` holds the domain and the ports (`Source`, `Sink`,
+`Transformer`) and imports nothing outside the standard library. Every
+technology (drivers, YAML, HTTP, the scheduler) lives in an adapter
+that depends on core, never the reverse. `internal/app` is the only
+package that knows every concrete type. Details and the SOLID mapping
+in [`docs/design.md`](./docs/design.md).
 
-- [ ] [Set up project integrations](https://new.gitlab.com/data/etl/go-aurora-exporter/-/settings/integrations)
+## Quick start
 
-## Collaborate with your team
+```bash
+cp .env.example .env                      # fill in REDSHIFT_DSN, HOTDATA_DSN
+cp config/aurora-exporter.example.yaml config/aurora-exporter.yaml
+set -a && . ./.env && set +a
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+make build
+./bin/aurora-exporter validate -ping      # config + connectivity
+./bin/aurora-exporter run brands          # one pipeline, once
+./bin/aurora-exporter run -all            # every enabled pipeline (CronJob-friendly)
+./bin/aurora-exporter serve               # scheduler + HTTP API
+```
 
-## Test and Deploy
+`run` exits non-zero if any pipeline failed and prints a summary:
 
-Use the built-in continuous integration in GitLab.
+```text
+PIPELINE  STATUS     ROWS  DURATION  ERROR
+brands    succeeded  2500  32ms
+```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+## Commands
 
-***
+| Command    | Purpose                                                               |
+|------------|-----------------------------------------------------------------------|
+| `serve`    | Scheduler + HTTP API until SIGINT/SIGTERM, then graceful shutdown      |
+| `run`      | Run named pipelines (or `-all`) once; exit 1 on failure                |
+| `validate` | Check the config and wiring without running; `-ping` tests connectivity |
+| `drivers`  | List sources, targets, write modes and transforms                      |
+| `version`  | Build information (version, commit, date via `-ldflags`)               |
 
-# Editing this README
+Every command takes `-config` (default: `$AURORA_EXPORTER_CONFIG`, then
+`config/aurora-exporter.yaml`). Logs go to stderr; stdout is reserved
+for command output and the `jsonl` stdout sink.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+## HTTP API
 
-## Suggestions for a good README
+| Method | Path                         | Description                                   |
+|--------|------------------------------|-----------------------------------------------|
+| GET    | `/healthz`                   | Liveness                                       |
+| GET    | `/readyz`                    | Readiness: 503 if any database is unreachable  |
+| GET    | `/version`                   | Build version                                  |
+| GET    | `/v1/pipelines`              | Every pipeline, its target, mode and schedule  |
+| GET    | `/v1/pipelines/{name}`       | One pipeline                                   |
+| POST   | `/v1/pipelines/{name}/runs`  | Start a run: `202` + `Location`, `409` if running |
+| GET    | `/v1/runs?pipeline=&limit=`  | Run history, newest first                      |
+| GET    | `/v1/runs/{id}`              | One run: status, rows, duration, error         |
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+With `server.auth_token` set, `/v1` requires `Authorization: Bearer <token>`.
 
-## Name
-Choose a self-explaining name for your project.
+## Configuration
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+[`config/aurora-exporter.example.yaml`](./config/aurora-exporter.example.yaml)
+documents every key. The essentials:
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+| Key | Default | Notes |
+|-----|---------|-------|
+| `defaults.batch_size` | 5000 | rows per fetch / write batch |
+| `defaults.attempts` | 3 | tries per scheduled tick (1 = no retry) |
+| `defaults.timeout` | none | per run; on expiry the run rolls back |
+| `defaults.transforms` | none | inherited unless a pipeline sets its own list |
+| `pipelines[].target.mode` | `replace` | `append`, `replace`, `truncate`, `upsert` (+ `keys`) |
+| `pipelines[].schedule.every` | manual | Go duration, ≥ 1s; the first run happens at startup |
+| `pipelines[].enabled` | true | disabled pipelines are not scheduled, nor run by `run -all` |
+| `connections.<name>.options.rows_per_statement` | 1000 | rows per INSERT (capped by the bind limit) |
+| `server.shutdown_timeout` | 30s | grace period for in-flight runs |
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## Verification
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+```bash
+make check             # gofmt, go vet, golangci-lint, go test -race (what CI runs)
+make test-integration  # real Postgres -> Postgres and Postgres -> MySQL (docker compose)
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+The integration suite uses a PostgreSQL container as the Redshift
+stand-in (Redshift speaks the PostgreSQL wire protocol, so the driver
+and code path are the same) and checks, among others: NULLs, numerics,
+timestamps, binary and non-ASCII text survive the trip unchanged;
+`replace` is idempotent; a run failing on row 2,400 of 2,500 leaves the
+previous data intact; `upsert` updates only the selected columns; MySQL
+refuses `truncate`.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+## Tests
+
+```mermaid
+flowchart TB
+    subgraph U["90 unit tests (go test -race, goleak on every concurrent package)"]
+        U1["core: streaming, empty results still commit, write/read/commit errors roll back, timeout, reader goroutine exits"]
+        U2["sqlsink: SQL per mode and dialect, chunking under the bind limit, prepare failure rolls back, custom strategies"]
+        U3["config: defaults, env expansion (secrets with YAML syntax, $1 untouched), unknown keys, every violation at once"]
+        U4["service / scheduler / httpapi / app / cli: per-pipeline lock, async + graceful drain, retries, 401/404/409, idle-conn shutdown"]
+    end
+    subgraph I["4 integration tests (docker compose)"]
+        I1["Postgres -> Postgres: replace, failed-run rollback, upsert, append, truncate"]
+        I2["Postgres -> MySQL: replace, upsert, truncate refused"]
+    end
+```
+
+## Docker
+
+```bash
+make docker-build   # ~12MB: static binary + CA certificates, FROM scratch, USER 65532
+make docker-run     # mounts CONFIG at /etc/aurora-exporter/config.yaml, reads .env
+```
+
+## Project structure
+
+```
+cmd/aurora-exporter/      main: signal handling, delegates to internal/cli
+internal/
+  core/                   domain + ports (Source, Cursor, Sink, Writer, Transformer) + Runner
+  core/coretest/          in-memory fakes of every port, shared by tests
+  connector/sqlsource/    database/sql Source (any driver)
+  connector/sqlsink/      database/sql Sink: Dialect (postgres, mysql) x Strategy (4 modes)
+  connector/jsonl/        JSON lines Sink (atomic file rename, or stdout)
+  connector/builtin/      registers the built-in drivers (the only place importing them)
+  registry/               driver name -> Source/Sink factory
+  transform/              built-in transformers + registry
+  config/                 YAML schema, env expansion, defaults, validation
+  run/                    Run model, Recorder/Reader ports, in-memory store
+  service/                run-by-name, per-pipeline lock, history
+  scheduler/              Scheduler port + go-workers adapter
+  httpapi/                HTTP handlers and middleware (stdlib net/http)
+  app/                    composition root + serve lifecycle
+  cli/                    subcommands
+config/                   reference configuration
+examples/redshift-to-aurora/   the original 21 exports as config + target migrations
+test/integration/         real-database suite (build tag: integration)
+docs/                     design.md, trade-offs.md
+```
 
 ## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+- `COPY FROM STDIN` fast path for PostgreSQL `append`/`replace`.
+- Incremental extraction with a persisted watermark (`updated_at > last_run`).
+- Redshift `UNLOAD` to S3 for very large tables.
+- Durable run history (`run.Store` in the target database) and Prometheus metrics.
 
 ## License
-For open source projects, say how it is licensed.
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+[MIT](./LICENSE)
+
+## Contact
+
+**Jefferson Marchetti**
+[jeffersonm.ferreira@gmail.com](mailto:jeffersonm.ferreira@gmail.com)

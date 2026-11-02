@@ -1,0 +1,1 @@
+drop table analytics.v_m_instagram_profiles_users CASCADE;
